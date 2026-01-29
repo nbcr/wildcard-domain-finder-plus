@@ -1,0 +1,34 @@
+{
+  "name": "wildcard-domain-finder-plus",
+  "version": "1.0.1",
+  "description": "Advanced wildcard and regex-based domain availability scanner with streaming generation, filtering, sorting, and caching.",
+  "main": "app.js",
+  "bin": {
+    "wildcard-domain-finder-plus": "app.js"
+	"wdf": "app.js"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nbcr/wildcard-domain-finder-plus.git"
+  },
+  "author": "nbcr",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/nbcr/wildcard-domain-finder-plus/issues"
+  },
+  "homepage": "https://github.com/nbcr/wildcard-domain-finder-plus#readme",
+  "keywords": [
+    "domain",
+    "dns",
+    "wildcard",
+    "regex",
+    "tld",
+    "availability",
+    "scanner",
+    "cli",
+    "domain-finder"
+  ]
+}
