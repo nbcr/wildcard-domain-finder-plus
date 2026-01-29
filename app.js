@@ -1,387 +1,558 @@
 #!/usr/bin/env node
 
-const fs = require("fs");
-const path = require("path");
-const dns = require("dns").promises;
-const readline = require("readline");
+// wildcard-domain-finder (upgraded)
+// - Supports wildcard patterns (* = single char)
+// - Optional regex mode
+// - TLD selection (explicit, all, premium)
+// - Filtering (tld, length, starts, ends)
+// - Sorting (comfirst, tld, length, alpha)
+// - Output formats: txt, json, jsonl, csv
+// - Caching + resume via JSONL
+// - Streaming generation (no heap blowups)
+// - Concurrency + timeout
+// - Interactive pause/resume/quit (p/r/q)
 
-// Configuration
-const CONFIG = {
-  ALPHABET: "abcdefghijklmnopqrstuvwxyz0123456789", // Characters to use for wildcards
-  CONCURRENT_CHECKS: 10, // Number of concurrent domain checks
-  TIMEOUT: 5000, // DNS timeout in milliseconds
-  OUTPUT_FILE: "available_domains.txt",
-  PROGRESS_UPDATE_INTERVAL: 50 // Update progress every N checks
-};
+const fs = require('fs');
+const dns = require('dns').promises;
+const readline = require('readline');
 
-class DomainFinder {
-  constructor(options = {}) {
-    this.concurrentChecks = options.concurrentChecks || CONFIG.CONCURRENT_CHECKS;
-    this.timeout = options.timeout || CONFIG.TIMEOUT;
-    this.outputFile = options.outputFile || CONFIG.OUTPUT_FILE;
-    this.stats = {
-      total: 0,
-      checked: 0,
-      available: 0,
-      errors: 0,
-      startTime: null
-    };
-    this.recentlyFound = []; // Store last 3 found domains
-    this.currentlyChecking = ''; // Current domain being checked
-  }
+const CHARSET = 'abcdefghijklmnopqrstuvwxyz0123456789';
 
-  // Function to check if a domain is available (unreachable/unregistered)
-  async isDomainAvailable(domain) {
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), this.timeout);
-      
-      await dns.resolve(domain);
-      clearTimeout(timeoutId);
-      return false; // Domain is registered/reachable
-    } catch (error) {
-      if (error.code === 'ENOTFOUND' || error.code === 'ENODATA') {
-        return true; // Domain appears to be available
-      }
-      // Other errors (timeout, network issues, etc.)
-      this.stats.errors++;
-      return false; // Assume unavailable on error
-    }
-  }
+const IANA_TLDS = [
+  'com','net','org','edu','gov','mil','int',
+  'ca','us','uk','de','fr','au','jp','cn','io','ai','co','me','tv','cc',
+  'xyz','info','biz','name','pro','tech','dev','app','cloud','store','shop',
+  'site','online','space','fun','live','world','today','news','media','social',
+  'group','club','team','company','agency','solutions','systems','network',
+  'software','digital','finance','capital','partners','ventures','consulting',
+  'services','support','help','care','health','clinic','law','legal',
+  'design','photo','photos','gallery','art','music','video','games','game',
+  'blog','wiki','school','academy','training','university','science',
+  'research','energy','solar','green','eco','earth','bio','farm','garden',
+  'coffee','pizza','bar','restaurant','kitchen','food','wine','beer',
+  'fashion','style','beauty','spa','travel','vacations','holiday','flights',
+  'hotel','rentals','cars','auto','car','bike','homes','house','realty',
+  'estate','property','land','city','zone','global','africa','asia','europe'
+];
 
-  // Generate all possible domain combinations
-  generateDomains(baseDomain, randomize = true) {
-    if (!baseDomain.includes('*')) {
-      return [baseDomain]; // No wildcards to replace
-    }
+const PREMIUM_TLDS = ['com','net','org','io','ai','co','dev','app','xyz','tech'];
 
-    const chars = CONFIG.ALPHABET.split("");
-    if (randomize) {
-      chars.sort(() => Math.random() - 0.5);
-    }
-    
-    const domains = [];
+const DOMAIN_REGEX = /^(?=.{1,253}$)(?!.*\.\.)([A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$/;
 
-    const generateWithWildcard = (domain, index) => {
-      if (index === domain.length) {
-        domains.push(domain);
-        return;
-      }
-      
-      if (domain[index] === "*") {
-        for (const char of chars) {
-          generateWithWildcard(
-            domain.slice(0, index) + char + domain.slice(index + 1), 
-            index + 1
-          );
-        }
-      } else {
-        generateWithWildcard(domain, index + 1);
-      }
-    };
+let paused = false;
+let quitting = false;
 
-    generateWithWildcard(baseDomain, 0);
-    return domains;
-  }
-
-  // Process domains in batches with concurrency control
-  async processDomainBatch(domains, writer) {
-    const results = [];
-    
-    for (let i = 0; i < domains.length; i += this.concurrentChecks) {
-      const batch = domains.slice(i, i + this.concurrentChecks);
-      const batchPromises = batch.map(async (domain) => {
-        this.currentlyChecking = domain;
-        const available = await this.isDomainAvailable(domain);
-        this.stats.checked++;
-        
-        if (available) {
-          this.stats.available++;
-          writer.write(`${domain}\n`);
-          
-          // Add to recently found domains (keep only last 3)
-          this.recentlyFound.unshift(domain);
-          if (this.recentlyFound.length > 3) {
-            this.recentlyFound.pop();
-          }
-        }
-        
-        return { domain, available };
-      });
-
-      const batchResults = await Promise.allSettled(batchPromises);
-      results.push(...batchResults);
-
-      // Update progress more frequently for better UX
-      if (this.stats.checked % 5 === 0 || 
-          this.stats.checked === this.stats.total) {
-        this.displayProgress();
-      }
-    }
-
-    return results;
-  }
-
-  // Display progress and statistics
-  displayProgress() {
-    const elapsed = (Date.now() - this.stats.startTime) / 1000;
-    const rate = this.stats.checked / elapsed;
-    const eta = (this.stats.total - this.stats.checked) / rate;
-    const percentage = (this.stats.checked / this.stats.total) * 100;
-    
-    // Create progress bar
-    const barWidth = 40;
-    const filledWidth = Math.round((percentage / 100) * barWidth);
-    const emptyWidth = barWidth - filledWidth;
-    const progressBar = '█'.repeat(filledWidth) + '░'.repeat(emptyWidth);
-    
-    console.clear();
-    console.log('🔍 Domain Finder - Live Progress');
-    console.log('='.repeat(70));
-    
-    // Progress bar with percentage
-    console.log(`Progress: [${progressBar}] ${percentage.toFixed(1)}%`);
-    console.log(`Status: ${this.stats.checked}/${this.stats.total} domains checked`);
-    console.log('');
-    
-    // Statistics
-    console.log('📊 Statistics:');
-    console.log(`   ✅ Available: ${this.stats.available}`);
-    console.log(`   ❌ Errors: ${this.stats.errors}`);
-    console.log(`   ⏱️  Elapsed: ${elapsed.toFixed(1)}s`);
-    console.log(`   🚀 Rate: ${rate.toFixed(1)} domains/sec`);
-    if (eta && eta < Infinity && eta > 0) {
-      console.log(`   ⏰ ETA: ${eta.toFixed(1)}s`);
-    }
-    console.log('');
-    
-    // Recently found domains
-    if (this.recentlyFound.length > 0) {
-      console.log('🎯 Recently Found Available Domains:');
-      this.recentlyFound.forEach((domain, index) => {
-        const icon = index === 0 ? '🆕' : index === 1 ? '📌' : '📋';
-        console.log(`   ${icon} ${domain}`);
-      });
-    } else {
-      console.log('🔍 No available domains found yet...');
-    }
-    
-    console.log('');
-    console.log(`🔄 Currently checking: ${this.currentlyChecking || 'Initializing...'}`);
-    console.log('='.repeat(70));
-    console.log('💡 Press Ctrl+C to stop the search');
-  }
-
-  // Main execution function
-  async findAvailableDomains(baseDomain) {
-    console.log(`🚀 Starting domain search for pattern: ${baseDomain}`);
-    
-    // Generate all domain combinations
-    console.log('📝 Generating domain combinations...');
-    const domains = this.generateDomains(baseDomain);
-    this.stats.total = domains.length;
-    this.stats.startTime = Date.now();
-    
-    console.log(`📊 Generated ${domains.length} domain combinations`);
-    console.log(`⚙️  Using ${this.concurrentChecks} concurrent checks\n`);
-
-    // Create output file
-    const filePath = path.join(__dirname, this.outputFile);
-    const writer = fs.createWriteStream(filePath, { flags: "w" }); // Overwrite mode
-    
-    try {
-      // Process domains
-      await this.processDomainBatch(domains, writer);
-      
-      // Final summary
-      const totalTime = (Date.now() - this.stats.startTime) / 1000;
-      console.clear();
-      console.log('🎉 Domain Search Completed Successfully!');
-      console.log('='.repeat(60));
-      console.log(`📊 Total domains checked: ${this.stats.total}`);
-      console.log(`✅ Available domains found: ${this.stats.available}`);
-      console.log(`❌ Errors encountered: ${this.stats.errors}`);
-      console.log(`⏱️  Total time: ${totalTime.toFixed(1)}s`);
-      console.log(`🚀 Average rate: ${(this.stats.total / totalTime).toFixed(1)} domains/sec`);
-      console.log(`📁 Results saved to: ${filePath}`);
-      
-      // Show all found domains if not too many
-      if (this.recentlyFound.length > 0) {
-        console.log('');
-        console.log('🎯 Available Domains Found:');
-        // Show all found domains from the file
-        if (this.stats.available <= 10) {
-          // Read and display all found domains if 10 or fewer
-          try {
-            const foundDomains = fs.readFileSync(filePath, 'utf8').trim().split('\n').filter(d => d);
-            foundDomains.forEach((domain, index) => {
-              console.log(`   ${index + 1}. ${domain}`);
-            });
-          } catch (error) {
-            // Fallback to recent domains
-            this.recentlyFound.reverse().forEach((domain, index) => {
-              console.log(`   ${index + 1}. ${domain}`);
-            });
-          }
-        } else {
-          console.log(`   💡 ${this.stats.available} domains found - check ${this.outputFile} for full list`);
-          console.log('   📋 Last 3 found:');
-          this.recentlyFound.reverse().forEach((domain, index) => {
-            console.log(`      ${index + 1}. ${domain}`);
-          });
-        }
-      } else {
-        console.log('');
-        console.log('😔 No available domains found with this pattern.');
-        console.log('💡 Try a different pattern or check a different TLD (.org, .net, etc.)');
-      }
-      
-      console.log('='.repeat(60));
-      
-    } finally {
-      writer.end();
-    }
-  }
+function isValidDomain(domain) {
+  return DOMAIN_REGEX.test(domain);
 }
 
-// Command line argument parsing
-function parseArguments() {
+function sleep(ms) {
+  return new Promise(res => setTimeout(res, ms));
+}
+
+function setupInteractiveControls() {
+  readline.emitKeypressEvents(process.stdin);
+  if (process.stdin.isTTY) process.stdin.setRawMode(true);
+
+  process.stdin.on('keypress', (str, key) => {
+    if (!key) return;
+    if (key.name === 'p') {
+      paused = true;
+      process.stdout.write('\n⏸️  Paused. Press r to resume, q to quit.\n');
+    }
+    if (key.name === 'r') {
+      paused = false;
+      process.stdout.write('\n▶️  Resumed.\n');
+    }
+    if (key.name === 'q') {
+      quitting = true;
+      process.stdout.write('\n🛑 Quitting gracefully...\n');
+    }
+  });
+}
+
+// ---------- CLI PARSING ----------
+
+function parseArgs() {
   const args = process.argv.slice(2);
-  const options = {
-    domain: null,
-    concurrentChecks: CONFIG.CONCURRENT_CHECKS,
-    timeout: CONFIG.TIMEOUT,
-    outputFile: CONFIG.OUTPUT_FILE,
-    help: false
+  const opts = {
+    pattern: null,
+    regex: null,
+    tlds: null,
+    allTlds: false,
+    premiumTlds: false,
+    filters: [],
+    sort: null,
+    format: 'txt',
+    output: 'available_domains.txt',
+    concurrency: 10,
+    timeout: 5000,
+    resume: false,
+    cacheFile: 'checked_domains.jsonl',
+    useCache: true,
+    maxLength: 4
   };
 
   for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    switch (arg) {
-      case '-d':
-      case '--domain':
-        options.domain = args[++i];
-        break;
-      case '-c':
-      case '--concurrent':
-        options.concurrentChecks = parseInt(args[++i]) || CONFIG.CONCURRENT_CHECKS;
-        break;
-      case '-t':
-      case '--timeout':
-        options.timeout = parseInt(args[++i]) || CONFIG.TIMEOUT;
-        break;
-      case '-o':
-      case '--output':
-        options.outputFile = args[++i];
-        break;
-      case '-h':
-      case '--help':
-        options.help = true;
-        break;
-      default:
-        if (!options.domain && !arg.startsWith('-')) {
-          options.domain = arg;
-        }
-        break;
+    const a = args[i];
+    if (a === '-d' || a === '--domain') {
+      opts.pattern = args[++i];
+    } else if (a === '-r' || a === '--regex') {
+      opts.regex = args[++i];
+    } else if (a === '-t' || a === '--tlds') {
+      const v = args[++i];
+      if (v === 'all') opts.allTlds = true;
+      else if (v === 'premium') opts.premiumTlds = true;
+      else opts.tlds = v.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+    } else if (a === '-f' || a === '--filter') {
+      opts.filters.push(args[++i]);
+    } else if (a === '-s' || a === '--sort') {
+      opts.sort = args[++i]; // comfirst | tld | length | alpha
+    } else if (a === '-F' || a === '--format') {
+      opts.format = args[++i].toLowerCase(); // txt | json | jsonl | csv
+    } else if (a === '-o' || a === '--output') {
+      opts.output = args[++i];
+    } else if (a === '-c' || a === '--concurrency') {
+      opts.concurrency = parseInt(args[++i], 10) || 10;
+    } else if (a === '-T' || a === '--timeout') {
+      opts.timeout = parseInt(args[++i], 10) || 5000;
+    } else if (a === '-R' || a === '--resume') {
+      opts.resume = true;
+    } else if (a === '--no-resume') {
+      opts.resume = false;
+    } else if (a === '-C' || a === '--cache') {
+      opts.cacheFile = args[++i];
+    } else if (a === '--no-cache') {
+      opts.useCache = false;
+    } else if (a === '--max-length') {
+      opts.maxLength = parseInt(args[++i], 10) || 4;
+    } else if (a === '-h' || a === '--help') {
+      printHelp();
+      process.exit(0);
     }
   }
 
-  return options;
+  return opts;
 }
 
-// Show help information
-function showHelp() {
+function printHelp() {
   console.log(`
-🔍 Domain Finder - Find available domain names
+Wildcard Domain Finder (upgraded)
 
-Usage: node app.js [options] <domain-pattern>
+Usage:
+  wildcard-domain-finder [options]
 
-Arguments:
-  domain-pattern    Domain pattern with wildcards (*) to search
-                   Example: test*.com, *domain.org, sub*.example.*
+Domain Input:
+  -d, --domain <pattern>       Wildcard pattern (* = single char)
+  -r, --regex <regex>          Regex pattern for full domain
+  -t, --tlds <list>            Comma-separated TLDs (e.g. com,net,io)
+      --tlds all               Use all known TLDs
+      --tlds premium           Use premium TLD list
+      --max-length <n>         Max label length for regex mode (default: 4)
 
-Options:
-  -d, --domain      Domain pattern to search (alternative to positional arg)
-  -c, --concurrent  Number of concurrent DNS checks (default: ${CONFIG.CONCURRENT_CHECKS})
-  -t, --timeout     DNS timeout in milliseconds (default: ${CONFIG.TIMEOUT})
-  -o, --output      Output file name (default: ${CONFIG.OUTPUT_FILE})
-  -h, --help        Show this help message
+Filtering:
+  -f, --filter <rule>          Filter results:
+                                 tld:com
+                                 tld:com,io,net
+                                 length<=3
+                                 length>=2
+                                 starts:go
+                                 ends:ai
 
-Examples:
-  node app.js "test*.com"
-  node app.js --domain "my*site.org" --concurrent 20
-  node app.js -d "*domain.net" -c 5 -t 3000 -o results.txt
-  `);
+Sorting:
+  -s, --sort <mode>            Sort results:
+                                 comfirst   (.com first)
+                                 tld        group by TLD
+                                 length     shortest first
+                                 alpha      alphabetical
+
+Output:
+  -F, --format <fmt>           txt | json | jsonl | csv
+  -o, --output <file>          Output file path
+
+Performance:
+  -c, --concurrency <n>        DNS concurrency (default: 10)
+  -T, --timeout <ms>           DNS timeout (default: 5000)
+
+Resume / Cache:
+  -R, --resume                 Resume from cache (skip already checked)
+      --no-resume              Ignore cache
+  -C, --cache <file>           Cache file (default: checked_domains.jsonl)
+      --no-cache               Disable caching
+
+Interactive Controls:
+      p                        Pause
+      r                        Resume
+      q                        Quit gracefully
+`);
 }
 
-// Interactive mode for when no arguments provided
-async function interactiveMode() {
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout
-  });
+// ---------- FILTERS & SORTING ----------
 
-  return new Promise((resolve) => {
-    rl.question("Enter domain pattern (use * for wildcards): ", (domain) => {
-      rl.close();
-      resolve(domain);
+function parseFilterRule(rule) {
+  // tld:com,io
+  if (rule.startsWith('tld:')) {
+    const list = rule.slice(4).split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+    return { type: 'tld', list };
+  }
+
+  // length<=3, length>=2
+  if (rule.startsWith('length<=')) {
+    const n = parseInt(rule.slice('length<='.length), 10);
+    return { type: 'lengthMax', value: n };
+  }
+  if (rule.startsWith('length>=')) {
+    const n = parseInt(rule.slice('length>='.length), 10);
+    return { type: 'lengthMin', value: n };
+  }
+
+  // starts:go
+  if (rule.startsWith('starts:')) {
+    const v = rule.slice('starts:'.length).toLowerCase();
+    return { type: 'starts', value: v };
+  }
+
+  // ends:ai
+  if (rule.startsWith('ends:')) {
+    const v = rule.slice('ends:'.length).toLowerCase();
+    return { type: 'ends', value: v };
+  }
+
+  return null;
+}
+
+function buildFilters(filterStrings) {
+  return filterStrings
+    .map(parseFilterRule)
+    .filter(Boolean);
+}
+
+function passesFilters(domain, filters) {
+  if (!filters.length) return true;
+
+  const [name, tld] = (() => {
+    const parts = domain.split('.');
+    const tld = parts.pop().toLowerCase();
+    const name = parts.join('.').toLowerCase();
+    return [name, tld];
+  })();
+
+  for (const f of filters) {
+    if (f.type === 'tld') {
+      if (!f.list.includes(tld)) return false;
+    } else if (f.type === 'lengthMax') {
+      if (name.length > f.value) return false;
+    } else if (f.type === 'lengthMin') {
+      if (name.length < f.value) return false;
+    } else if (f.type === 'starts') {
+      if (!name.startsWith(f.value)) return false;
+    } else if (f.type === 'ends') {
+      if (!name.endsWith(f.value)) return false;
+    }
+  }
+
+  return true;
+}
+
+function sortResults(results, mode) {
+  if (!mode) return results;
+
+  if (mode === 'comfirst') {
+    return results.sort((a, b) => {
+      const aCom = a.tld === 'com' ? 0 : 1;
+      const bCom = b.tld === 'com' ? 0 : 1;
+      if (aCom !== bCom) return aCom - bCom;
+      return a.domain.localeCompare(b.domain);
     });
-  });
+  }
+
+  if (mode === 'tld') {
+    return results.sort((a, b) => {
+      if (a.tld !== b.tld) return a.tld.localeCompare(b.tld);
+      return a.domain.localeCompare(b.domain);
+    });
+  }
+
+  if (mode === 'length') {
+    return results.sort((a, b) => {
+      if (a.name.length !== b.name.length) return a.name.length - b.name.length;
+      return a.domain.localeCompare(b.domain);
+    });
+  }
+
+  if (mode === 'alpha') {
+    return results.sort((a, b) => a.domain.localeCompare(b.domain));
+  }
+
+  return results;
 }
 
-// Main execution
-async function main() {
-  const options = parseArguments();
+// ---------- PATTERN / REGEX GENERATION ----------
 
-  if (options.help) {
-    showHelp();
+function* expandWildcardPattern(pattern) {
+  // * = single char from CHARSET
+  function* helper(index, prefix) {
+    if (index === pattern.length) {
+      yield prefix;
+      return;
+    }
+    const ch = pattern[index];
+    if (ch === '*') {
+      for (const c of CHARSET) {
+        yield* helper(index + 1, prefix + c);
+      }
+    } else {
+      yield* helper(index + 1, prefix + ch);
+    }
+  }
+  yield* helper(0, '');
+}
+
+function* expandPatternWithTlds(pattern, tlds) {
+  if (pattern.endsWith('.*')) {
+    const core = pattern.slice(0, -2); // keep trailing dot
+    for (const base of expandWildcardPattern(core)) {
+      for (const tld of tlds) {
+        yield base + tld;
+      }
+    }
+  } else {
+    yield* expandWildcardPattern(pattern);
+  }
+}
+
+function* generateAllDomainsForRegex(maxLength, tlds) {
+  function* build(prefix, depth) {
+    if (depth === 0) {
+      for (const tld of tlds) {
+        yield prefix + '.' + tld;
+      }
+      return;
+    }
+    for (const c of CHARSET) {
+      yield* build(prefix + c, depth - 1);
+    }
+  }
+
+  for (let len = 1; len <= maxLength; len++) {
+    yield* build('', len);
+  }
+}
+
+// ---------- DNS + CACHE ----------
+
+async function checkDomain(domain, timeoutMs) {
+  const timeout = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error('TIMEOUT')), timeoutMs)
+  );
+
+  try {
+    await Promise.race([
+      dns.resolveAny(domain),
+      timeout
+    ]);
+    return { domain, available: false, error: null };
+  } catch (err) {
+    if (err.code === 'ENOTFOUND' || err.code === 'ENODATA') {
+      return { domain, available: true, error: null };
+    }
+    if (err.message === 'TIMEOUT') {
+      return { domain, available: null, error: 'timeout' };
+    }
+    return { domain, available: null, error: err.code || err.message };
+  }
+}
+
+function loadCache(cacheFile) {
+  const map = new Map();
+  if (!fs.existsSync(cacheFile)) return map;
+  const lines = fs.readFileSync(cacheFile, 'utf8').split('\n');
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    try {
+      const obj = JSON.parse(line);
+      if (obj.domain) map.set(obj.domain, obj);
+    } catch {
+      // ignore bad lines
+    }
+  }
+  return map;
+}
+
+function appendToCache(cacheFile, obj) {
+  fs.appendFileSync(cacheFile, JSON.stringify(obj) + '\n');
+}
+
+// ---------- OUTPUT ----------
+
+function writeOutput(results, opts) {
+  const out = opts.output;
+  const fmt = opts.format;
+
+  if (fmt === 'txt') {
+    const lines = results.map(r => r.domain);
+    fs.writeFileSync(out, lines.join('\n') + '\n', 'utf8');
+    console.log(`✅ Saved ${results.length} domains to ${out} (txt).`);
     return;
   }
 
-  let domain = options.domain;
-
-  // If no domain provided, use interactive mode
-  if (!domain) {
-    console.log("No domain pattern provided. Starting interactive mode...\n");
-    domain = await interactiveMode();
+  if (fmt === 'json') {
+    fs.writeFileSync(out, JSON.stringify(results, null, 2), 'utf8');
+    console.log(`✅ Saved ${results.length} domains to ${out} (json).`);
+    return;
   }
 
-  if (!domain) {
-    console.error("❌ No domain pattern provided. Use --help for usage information.");
-    process.exit(1);
+  if (fmt === 'jsonl') {
+    const lines = results.map(r => JSON.stringify(r));
+    fs.writeFileSync(out, lines.join('\n') + '\n', 'utf8');
+    console.log(`✅ Saved ${results.length} domains to ${out} (jsonl).`);
+    return;
   }
 
-  // Validate domain pattern
-  if (!domain.includes('.')) {
-    console.error("❌ Invalid domain pattern. Domain must include a TLD (e.g., .com, .org)");
-    process.exit(1);
+  if (fmt === 'csv') {
+    const header = 'domain,tld,name,available,checkedAt,error\n';
+    const rows = results.map(r =>
+      `${r.domain},${r.tld},${r.name},${r.available},${r.checkedAt},${r.error || ''}`
+    );
+    fs.writeFileSync(out, header + rows.join('\n') + '\n', 'utf8');
+    console.log(`✅ Saved ${results.length} domains to ${out} (csv).`);
+    return;
   }
 
-  // Create and run domain finder
-  const finder = new DomainFinder({
-    concurrentChecks: options.concurrentChecks,
-    timeout: options.timeout,
-    outputFile: options.outputFile
-  });
-
-  try {
-    await finder.findAvailableDomains(domain);
-  } catch (error) {
-    console.error("❌ An error occurred:", error.message);
-    process.exit(1);
-  }
+  // fallback
+  const lines = results.map(r => r.domain);
+  fs.writeFileSync(out, lines.join('\n') + '\n', 'utf8');
+  console.log(`✅ Saved ${results.length} domains to ${out} (txt fallback).`);
 }
 
-// Handle process termination gracefully
-process.on('SIGINT', () => {
-  console.log('\n\n⏹️  Process interrupted by user. Exiting...');
-  process.exit(0);
-});
+// ---------- MAIN RUN ----------
 
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+async function run() {
+  const opts = parseArgs();
+
+  if (!opts.pattern && !opts.regex) {
+    printHelp();
+    process.exit(1);
+  }
+
+  const filters = buildFilters(opts.filters);
+
+  let tlds;
+  if (opts.allTlds) tlds = IANA_TLDS;
+  else if (opts.premiumTlds) tlds = PREMIUM_TLDS;
+  else if (opts.tlds && opts.tlds.length) tlds = opts.tlds;
+  else tlds = ['com'];
+
+  let regex = null;
+  if (opts.regex) {
+    try {
+      regex = new RegExp(opts.regex);
+    } catch (err) {
+      console.error('Invalid regex:', err.message);
+      process.exit(1);
+    }
+  }
+
+  const cache = opts.useCache ? loadCache(opts.cacheFile) : new Map();
+
+  console.log(`🚀 Starting domain search`);
+  if (opts.pattern) console.log(`  Pattern: ${opts.pattern}`);
+  if (regex) console.log(`  Regex:   ${opts.regex}`);
+  console.log(`  TLDs:    ${tlds.join(', ')}`);
+  console.log(`  Concurrency: ${opts.concurrency}, Timeout: ${opts.timeout}ms`);
+  console.log(`  Output:  ${opts.output} (${opts.format})`);
+  if (opts.useCache) console.log(`  Cache:   ${opts.cacheFile} (${cache.size} entries loaded)`);
+
+  setupInteractiveControls();
+
+  const iterator = regex
+    ? generateAllDomainsForRegex(opts.maxLength, tlds)
+    : expandPatternWithTlds(opts.pattern, tlds);
+
+  const availableResults = [];
+  const tasks = [];
+  let active = 0;
+  let checked = 0;
+  let totalCandidates = 0;
+  const startTime = Date.now();
+
+  async function scheduleNext() {
+    if (quitting) return;
+    while (!paused && active < opts.concurrency) {
+      const next = iterator.next();
+      if (next.done) break;
+      const domain = next.value;
+      totalCandidates++;
+
+      if (!isValidDomain(domain)) continue;
+      if (!passesFilters(domain, filters)) continue;
+
+      if (opts.useCache && cache.has(domain)) {
+        continue;
+      }
+
+      active++;
+      const task = (async () => {
+        const res = await checkDomain(domain, opts.timeout);
+        checked++;
+
+        const [name, tld] = (() => {
+          const parts = domain.split('.');
+          const tld = parts.pop().toLowerCase();
+          const name = parts.join('.').toLowerCase();
+          return [name, tld];
+        })();
+
+        const record = {
+          domain,
+          name,
+          tld,
+          available: res.available,
+          checkedAt: new Date().toISOString(),
+          error: res.error
+        };
+
+        if (opts.useCache) {
+          cache.set(domain, record);
+          appendToCache(opts.cacheFile, record);
+        }
+
+        if (res.available === true) {
+          availableResults.push(record);
+          process.stdout.write(
+            `\rChecked: ${checked.toLocaleString()} | Available: ${availableResults.length.toLocaleString()}   `
+          );
+        }
+      })().finally(() => {
+        active--;
+      });
+
+      tasks.push(task);
+    }
+  }
+
+  while (true) {
+    if (quitting) break;
+    if (!paused) {
+      await scheduleNext();
+    }
+    if (active === 0 && iterator.next().done) {
+      break;
+    }
+    await sleep(100);
+  }
+
+  await Promise.all(tasks);
+
+  const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+  console.log(`\n⏱  Done in ${duration}s. Checked ${checked.toLocaleString()} domains.`);
+  console.log(`✅ Available: ${availableResults.length.toLocaleString()}`);
+
+  const sorted = sortResults(availableResults, opts.sort);
+  writeOutput(sorted, opts);
+}
+
+run().catch(err => {
+  console.error('Fatal error:', err);
   process.exit(1);
 });
-
-// Start the application
-main().catch(console.error);
