@@ -1,3 +1,7 @@
+[![npm version](https://img.shields.io/npm/v/wildcard-domain-finder-plus.svg)](https://www.npmjs.com/package/wildcard-domain-finder-plus)
+[![npm downloads](https://img.shields.io/npm/dm/wildcard-domain-finder-plus.svg)](https://www.npmjs.com/package/wildcard-domain-finder-plus)
+[![license](https://img.shields.io/badge/license-ISC-blue.svg)](LICENSE)
+
 ## Attribution
 
 This project is an enhanced fork of  
