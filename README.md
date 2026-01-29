@@ -5,7 +5,7 @@ This project is an enhanced fork of
 Original work © the respective author(s), licensed under the ISC License.
 
 This fork adds major new capabilities including:
-- streaming domain generation
+- streaming domain generation (no memory blowups)
 - regex mode
 - wildcard mode
 - TLD selection (explicit, all, premium)
@@ -19,99 +19,327 @@ This fork adds major new capabilities including:
 
 All original licensing terms are preserved.
 
-----------------------------------------------------------------------------------------------------------------
+---
 
-# Wildcard Domain Finder
+# Wildcard Domain Finder Plus
 
-A command-line tool to find available domain names using wildcard patterns.
+A command-line tool to find available domain names using wildcard patterns, regex patterns, or structured filters — now with streaming generation, caching, and advanced TLD control.
 
-[![npm version](https://badge.fury.io/js/wildcard-domain-finder.svg)](https://www.npmjs.com/package/wildcard-domain-finder)
+---
 
-## Description
+# Quick Start
 
-This tool allows you to search for available domain names by using wildcard patterns. It uses DNS lookups to check if domains are registered/reachable and saves available domains to a text file.
+Install globally:
 
-## Installation
+    npm install -g wildcard-domain-finder-plus
 
-### Via NPX (no installation required):
-```bash
-npx wildcard-domain-finder
-```
+Run a simple wildcard scan:
 
-### Or install globally:
-```bash
-npm install -g wildcard-domain-finder
-```
+    wildcard-domain-finder-plus -d "test*.com"
 
-## Usage
+Run a regex scan:
 
-### Basic usage:
-```bash
-npx wildcard-domain-finder "test*.com"
-```
+    wildcard-domain-finder-plus --regex "^[a-z]{3}\\.com$"
 
-### With options:
-```bash
-npx wildcard-domain-finder --domain "my*site.org" --concurrent 20
-```
+Scan all TLDs:
 
-### Interactive mode (if no domain provided):
-```bash
-npx wildcard-domain-finder
-```
+    wildcard-domain-finder-plus -d "go*" --tlds all
 
-## Examples
+---
 
-```bash
-npx wildcard-domain-finder "blog*.com"
-npx wildcard-domain-finder "*shop.net"
-npx wildcard-domain-finder "sub*.example.*"
-```
+# Installation
 
-## Options
+### Via NPX (no installation required)
 
-| Option | Description |
-|--------|-------------|
-| `-d, --domain` | Domain pattern with wildcards (*) |
-| `-c, --concurrent` | Number of concurrent DNS checks (default: 10) |
-| `-t, --timeout` | DNS timeout in milliseconds (default: 5000) |
-| `-o, --output` | Output file name (default: available_domains.txt) |
-| `-h, --help` | Show help message |
+    npx wildcard-domain-finder-plus
 
-## Wildcards
+### Or install globally
 
-Use `*` in your domain pattern to represent any single character from:
-`abcdefghijklmnopqrstuvwxyz0123456789`
+    npm install -g wildcard-domain-finder-plus
 
-### Examples:
-- `"test*.com"` checks: testa.com, testb.com, test1.com, etc.
-- `"*domain.org"` checks: adomain.org, bdomain.org, 1domain.org, etc.
-- `"my*site.*"` checks multiple TLDs and subdomains
+---
 
-## Output
+# Usage Guide
 
-Available domains are saved to `available_domains.txt` (or custom file with `-o` option).
-The tool shows real-time progress with statistics and recently found domains.
+Wildcard Domain Finder Plus supports three primary modes:
 
-## Features
+1. Wildcard mode  
+2. Regex mode  
+3. Structured filtering mode  
 
-- ✅ Real-time progress display with progress bar
-- ⚡ Concurrent DNS checking for faster results
-- ⚙️ Customizable timeout and concurrency settings
-- 🛡️ Error handling for network issues
-- 💬 Interactive mode when no arguments provided
-- 🔄 Graceful handling of interruption (Ctrl+C)
+Each mode can be combined with TLD selection, sorting, output formatting, and caching.
 
-## Author
+---
 
-**besoeasy**
+## Wildcard Mode
 
-## License
+Use * to represent any single alphanumeric character (a–z, 0–9).
 
-ISC
+Example:
 
-## Links
+    wildcard-domain-finder-plus -d "test*.com"
 
-- [NPM Package](https://www.npmjs.com/package/wildcard-domain-finder)
-- [GitHub Repository](https://github.com/besoeasy/wildcard-domain-finder)
-- [Issues](https://github.com/besoeasy/wildcard-domain-finder/issues)
+This expands to:
+
+- testa.com  
+- testb.com  
+- test1.com  
+- …and so on  
+
+Wildcard mode is ideal when you know the pattern but not the exact characters.
+
+---
+
+## Regex Mode
+
+Regex mode gives you full control over domain label generation.
+
+Example:
+
+    wildcard-domain-finder-plus --regex "^[a-z0-9]{3}\\.com$"
+
+This generates:
+
+- aaa.com  
+- aab.com  
+- …  
+- zzz.com  
+
+Regex mode supports:
+
+- character classes  
+- alternation  
+- anchors  
+- quantifiers  
+- grouping  
+
+---
+
+# Regex Helper
+
+### Three‑letter domains
+
+    ^[a-z]{3}\\.(com|net|org)$
+
+### Two letters + one digit
+
+    ^[a-z]{2}[0-9]\\.com$
+
+### Start with “go”, then any 2 chars
+
+    ^go[a-z0-9]{2}\\.io$
+
+### Premium TLDs only
+
+    ^[a-z]{3,5}\\.(ai|io|dev)$
+
+### Only letters (no digits)
+
+    ^[a-z]+\\.(com|net)$
+
+### Letters + optional hyphen
+
+    ^[a-z]+(-[a-z]+)?\\.com$
+
+### Multiple TLDs
+
+    ^[a-z]{4}\\.(com|io|ai|co)$
+
+---
+
+# TLD Selection
+
+Choose from:
+
+- explicit list  
+- all known TLDs  
+- premium curated list  
+
+Examples:
+
+    wildcard-domain-finder-plus -d "go*" --tlds all
+
+    wildcard-domain-finder-plus -d "ai*" --tlds premium
+
+    wildcard-domain-finder-plus -d "shop*" --tlds com,net,org,io
+
+---
+
+# Filtering
+
+Filters allow you to refine generated domains.
+
+Supported filters:
+
+- tld:com  
+- length<=3  
+- starts:go  
+- ends:ai  
+
+Examples:
+
+    wildcard-domain-finder-plus -d "***.com" --filter length<=3
+
+    wildcard-domain-finder-plus -d "*ai" --filter ends:ai
+
+    wildcard-domain-finder-plus -d "go*" --filter starts:go
+
+---
+
+# Sorting
+
+Sorting options:
+
+- comfirst  
+- tld  
+- length  
+- alpha  
+
+Example:
+
+    wildcard-domain-finder-plus -d "***.com" --sort comfirst
+
+---
+
+# Output Formats
+
+Choose from:
+
+- txt  
+- json  
+- jsonl  
+- csv  
+
+Example:
+
+    wildcard-domain-finder-plus -d "go*" -F jsonl -o results.jsonl
+
+---
+
+# Caching and Resume Mode
+
+Large scans can be resumed:
+
+    wildcard-domain-finder-plus -R
+
+Disable caching:
+
+    wildcard-domain-finder-plus --no-cache
+
+---
+
+# Interactive Mode
+
+If no domain or regex is provided:
+
+    wildcard-domain-finder-plus
+
+You will be prompted for:
+
+- mode  
+- pattern  
+- TLDs  
+- filters  
+- output format  
+
+---
+
+# Common Recipes
+
+### Find all 3‑letter .com domains
+
+    wildcard-domain-finder-plus --regex "^[a-z]{3}\\.com$"
+
+### Find all domains starting with “go” across all TLDs
+
+    wildcard-domain-finder-plus -d "go*" --tlds all
+
+### Find short premium domains
+
+    wildcard-domain-finder-plus -d "***" --tlds premium --filter length<=3
+
+### Find 4‑letter .io or .ai domains
+
+    wildcard-domain-finder-plus --regex "^[a-z]{4}\\.(io|ai)$"
+
+### Wildcard + filtering + sorting
+
+    wildcard-domain-finder-plus -d "go**.com" --filter length<=4 --sort alpha
+
+---
+
+# Performance Tips
+
+### 1. Increase concurrency for faster scans
+
+    --concurrency 50
+
+### 2. Reduce DNS timeout for faster failures
+
+    --timeout 2000
+
+### 3. Use JSONL for huge output sets
+
+    -F jsonl
+
+### 4. Use resume mode for long scans
+
+    -R
+
+### 5. Limit search space with filters
+
+    --filter length<=4  
+    --filter starts:go  
+    --filter tld:com  
+
+### 6. Prefer regex for structured patterns
+
+Regex mode avoids generating unnecessary combinations.
+
+---
+
+# Full Examples
+
+### Wildcard + premium TLDs
+
+    wildcard-domain-finder-plus -d "ai*" --tlds premium
+
+### Regex + JSONL output
+
+    wildcard-domain-finder-plus --regex "^[a-z]{4}\\.(io|ai)$" -F jsonl
+
+### Resume a long scan
+
+    wildcard-domain-finder-plus -R
+
+---
+
+# Features
+
+- ⚡ Streaming domain generation (no memory blowups)
+- 🃏 Wildcard mode (* = single character)
+- 🔍 Regex mode
+- 🌍 TLD selection (explicit, all, premium)
+- 🧹 Filtering (tld, length, starts, ends)
+- 🔃 Sorting (comfirst, tld, length, alpha)
+- 📝 Multiple output formats (txt, json, jsonl, csv)
+- 💾 Caching + resume mode
+- ⏸️ Interactive pause/resume/quit
+- ⏱️ Concurrency + timeout controls
+- 🛡️ Graceful error handling
+- ❓ Full CLI help system
+
+---
+
+# License
+
+ISC  
+All original licensing terms are preserved.
+
+---
+
+# Links
+
+- NPM Package: https://www.npmjs.com/package/wildcard-domain-finder-plus  
+- GitHub Repository: https://github.com/nbcr/wildcard-domain-finder-plus  
+- Issues: https://github.com/nbcr/wildcard-domain-finder-plus/issues  
