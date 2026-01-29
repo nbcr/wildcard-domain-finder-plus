@@ -1,31 +1,43 @@
-# This workflow will run tests using node and then publish a package to GitHub Packages when a release is created
-# For more information see: https://docs.github.com/en/actions/publishing-packages/publishing-nodejs-packages
-
-name: Publish to npm
+name: Publish Package
 
 on:
   push:
     tags:
       - 'v*'
 
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest   # You *can* change this, but ubuntu is simplest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
+      # Install Java (your build environment)
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      # Build your Java project
+      - name: Build Java project
+        run: ./gradlew build || mvn package
+
+      # Install Node (required for npm publish)
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          registry-url: 'https://registry.npmjs.org/'
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
 
-      - name: Install dependencies
-        run: npm install
+      # Install npm dependencies (if any)
+      - name: Install npm dependencies
+        run: npm ci --ignore-scripts
 
-      - name: Publish package
-        run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # Publish to npm using Trusted Publishing
+      - name: Publish to npm
+        run: npm publish --provenance --access public
