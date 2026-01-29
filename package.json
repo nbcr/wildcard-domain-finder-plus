@@ -1,6 +1,6 @@
 {
   "name": "wildcard-domain-finder-plus",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Advanced wildcard and regex-based domain availability scanner with streaming generation, filtering, sorting, and caching.",
   "main": "app.js",
   "bin": {
