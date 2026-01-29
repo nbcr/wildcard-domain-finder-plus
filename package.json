@@ -4,8 +4,8 @@
   "description": "Advanced wildcard and regex-based domain availability scanner with streaming generation, filtering, sorting, and caching.",
   "main": "app.js",
   "bin": {
-    "wildcard-domain-finder-plus": "app.js"
-	"wdf": "app.js"
+    "wildcard-domain-finder-plus": "app.js",
+    "wdf": "app.js"
   },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"

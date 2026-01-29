@@ -1,3 +1,7 @@
+[![npm version](https://img.shields.io/npm/v/wildcard-domain-finder-plus.svg)](https://www.npmjs.com/package/wildcard-domain-finder-plus)
+[![npm downloads](https://img.shields.io/npm/dm/wildcard-domain-finder-plus.svg)](https://www.npmjs.com/package/wildcard-domain-finder-plus)
+[![license](https://img.shields.io/badge/license-ISC-blue.svg)](LICENSE)
+
 ## Attribution
 
 This project is an enhanced fork of  
@@ -35,15 +39,20 @@ Install globally:
 
 Run a simple wildcard scan:
 
+	wdf -d "test*.com"
+
+Or use the full command:
+
     wildcard-domain-finder-plus -d "test*.com"
+
 
 Run a regex scan:
 
-    wildcard-domain-finder-plus --regex "^[a-z]{3}\\.com$"
+    wdf --regex "^[a-z]{3}\\.com$"
 
 Scan all TLDs:
 
-    wildcard-domain-finder-plus -d "go*" --tlds all
+    wdf -d "go*" --tlds all
 
 ---
 
@@ -77,7 +86,7 @@ Use * to represent any single alphanumeric character (a–z, 0–9).
 
 Example:
 
-    wildcard-domain-finder-plus -d "test*.com"
+    wdf -d "test*.com"
 
 This expands to:
 
@@ -96,7 +105,7 @@ Regex mode gives you full control over domain label generation.
 
 Example:
 
-    wildcard-domain-finder-plus --regex "^[a-z0-9]{3}\\.com$"
+    wdf --regex "^[a-z0-9]{3}\\.com$"
 
 This generates:
 
@@ -157,11 +166,11 @@ Choose from:
 
 Examples:
 
-    wildcard-domain-finder-plus -d "go*" --tlds all
+    wdf -d "go*" --tlds all
 
-    wildcard-domain-finder-plus -d "ai*" --tlds premium
+    wdf -d "ai*" --tlds premium
 
-    wildcard-domain-finder-plus -d "shop*" --tlds com,net,org,io
+    wdf -d "shop*" --tlds com,net,org,io
 
 ---
 
@@ -178,11 +187,11 @@ Supported filters:
 
 Examples:
 
-    wildcard-domain-finder-plus -d "***.com" --filter length<=3
+    wdf -d "***.com" --filter length<=3
 
-    wildcard-domain-finder-plus -d "*ai" --filter ends:ai
+    wdf -d "*ai" --filter ends:ai
 
-    wildcard-domain-finder-plus -d "go*" --filter starts:go
+    wdf -d "go*" --filter starts:go
 
 ---
 
@@ -197,7 +206,7 @@ Sorting options:
 
 Example:
 
-    wildcard-domain-finder-plus -d "***.com" --sort comfirst
+    wdf -d "***.com" --sort comfirst
 
 ---
 
@@ -212,7 +221,7 @@ Choose from:
 
 Example:
 
-    wildcard-domain-finder-plus -d "go*" -F jsonl -o results.jsonl
+    wdf -d "go*" -F jsonl -o results.jsonl
 
 ---
 
@@ -220,11 +229,11 @@ Example:
 
 Large scans can be resumed:
 
-    wildcard-domain-finder-plus -R
+    wdf -R
 
 Disable caching:
 
-    wildcard-domain-finder-plus --no-cache
+    wdf --no-cache
 
 ---
 
@@ -232,7 +241,7 @@ Disable caching:
 
 If no domain or regex is provided:
 
-    wildcard-domain-finder-plus
+    wdf
 
 You will be prompted for:
 
@@ -248,23 +257,23 @@ You will be prompted for:
 
 ### Find all 3‑letter .com domains
 
-    wildcard-domain-finder-plus --regex "^[a-z]{3}\\.com$"
+    wdf --regex "^[a-z]{3}\\.com$"
 
 ### Find all domains starting with “go” across all TLDs
 
-    wildcard-domain-finder-plus -d "go*" --tlds all
+    wdf -d "go*" --tlds all
 
 ### Find short premium domains
 
-    wildcard-domain-finder-plus -d "***" --tlds premium --filter length<=3
+    wdf -d "***" --tlds premium --filter length<=3
 
 ### Find 4‑letter .io or .ai domains
 
-    wildcard-domain-finder-plus --regex "^[a-z]{4}\\.(io|ai)$"
+    wdf --regex "^[a-z]{4}\\.(io|ai)$"
 
 ### Wildcard + filtering + sorting
 
-    wildcard-domain-finder-plus -d "go**.com" --filter length<=4 --sort alpha
+    wdf -d "go**.com" --filter length<=4 --sort alpha
 
 ---
 
@@ -302,15 +311,15 @@ Regex mode avoids generating unnecessary combinations.
 
 ### Wildcard + premium TLDs
 
-    wildcard-domain-finder-plus -d "ai*" --tlds premium
+    wdf -d "ai*" --tlds premium
 
 ### Regex + JSONL output
 
-    wildcard-domain-finder-plus --regex "^[a-z]{4}\\.(io|ai)$" -F jsonl
+    wdf --regex "^[a-z]{4}\\.(io|ai)$" -F jsonl
 
 ### Resume a long scan
 
-    wildcard-domain-finder-plus -R
+    wdf -R
 
 ---
 
