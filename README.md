@@ -1,3 +1,26 @@
+## Attribution
+
+This project is an enhanced fork of  
+**besoeasy/wildcard-domain-finder**  
+Original work © the respective author(s), licensed under the ISC License.
+
+This fork adds major new capabilities including:
+- streaming domain generation
+- regex mode
+- wildcard mode
+- TLD selection (explicit, all, premium)
+- filtering (tld, length, starts, ends)
+- sorting (comfirst, tld, length, alpha)
+- JSON / JSONL / CSV / TXT output
+- caching + resume mode
+- interactive pause/resume/quit controls
+- concurrency + timeout controls
+- full CLI help system
+
+All original licensing terms are preserved.
+
+----------------------------------------------------------------------------------------------------------------
+
 # Wildcard Domain Finder
 
 A command-line tool to find available domain names using wildcard patterns.
